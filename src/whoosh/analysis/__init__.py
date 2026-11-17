@@ -67,3 +67,4 @@ from whoosh.analysis.morph import *
 from whoosh.analysis.intraword import *
 from whoosh.analysis.ngrams import *
 from whoosh.analysis.analyzers import *
+from whoosh.analysis.synonyms import *

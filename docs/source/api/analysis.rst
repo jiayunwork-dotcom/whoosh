@@ -52,6 +52,18 @@ Filters
 .. autoclass:: DelimitedAttributeFilter
 .. autoclass:: DoubleMetaphoneFilter
 .. autoclass:: SubstitutionFilter
+.. autoclass:: SynonymFilter
+
+Query-time synonym plans
+========================
+
+.. autoclass:: SynonymPlan
+   :members: edges_from, needs_positions, token_emissions
+
+.. autoclass:: SynonymEdge
+.. autoclass:: SynonymRuleSet
+
+.. autoexception:: SynonymError
 
 
 Token classes and functions

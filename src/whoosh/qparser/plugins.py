@@ -699,12 +699,17 @@ class PhrasePlugin(Plugin):
             # and also record the startchar and endchar of each word
 
             sc = self.textstartchar
+            phrase_analyzer = None
             if parser.schema and fieldname in parser.schema:
                 field = parser.schema[fieldname]
+                phrase_analyzer = field.analyzer
                 if field.analyzer:
                     # We have a field with an analyzer, so use it to parse
-                    # the phrase into tokens
-                    tokens = field.tokenize(text, mode="query", chars=True)
+                    # the phrase into tokens. Copy each token because
+                    # tokenizers reuse one Token object.
+                    tokens = [t.copy() for t in
+                              field.tokenize(text, mode="query", chars=True,
+                                             positions=True)]
                     words = []
                     char_ranges = []
                     for t in tokens:
@@ -724,6 +729,20 @@ class PhrasePlugin(Plugin):
                 for match in PhrasePlugin.wordexpr.finditer(text):
                     words.append(match.group(0))
                     char_ranges.append((sc + match.start(), sc + match.end()))
+
+            # A quoted phrase whose analyzer attached a synonym plan is parsed
+            # as one complete-reading query. The plan records which fragment
+            # of the phrase each replacement came from; the char offset keeps
+            # those ranges relative to the original query string.
+            if phrase_analyzer is not None:
+                from whoosh.analysis.synonyms import get_synonym_plan
+                plan = get_synonym_plan(tokens)
+                if plan is not None and plan.replacement:
+                    from whoosh.query.synonyms import SynonymQuery
+                    q = SynonymQuery(fieldname, plan, slop=self.slop,
+                                     boost=self.boost, phrase_mode=True,
+                                     char_offset=sc)
+                    return attach(q, self)
 
             qclass = parser.phraseclass
             q = qclass(fieldname, words, slop=self.slop, boost=self.boost,

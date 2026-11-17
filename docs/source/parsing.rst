@@ -149,6 +149,57 @@ as:
     (title:three OR content:three) (title:blind OR content:blind) (title:mice OR content:mice)
 
 
+Query-time multi-word synonyms
+------------------------------
+
+If a field's analyzer ends with :class:`whoosh.analysis.SynonymFilter`, quoted
+phrases and individual terms can match multi-word synonyms::
+
+    from whoosh import analysis, fields, qparser
+
+    rules = [(("nyc",), ("new", "york"))]
+    ana = (analysis.RegexTokenizer()
+           | analysis.LowercaseFilter()
+           | analysis.SynonymFilter(rules))
+    schema = fields.Schema(text=fields.TEXT(analyzer=ana))
+    parser = qparser.QueryParser("text", schema)
+
+    q = parser.parse("nyc subway")
+
+The parser produces a :class:`whoosh.query.SynonymQuery` that contains the
+whole reading graph for the term, not an expanded ``Or`` of every reading. For
+this query the document set is:
+
+* ``nyc subway`` (the original reading), and
+* ``new york subway`` (the replacement reading).
+
+It does *not* match ``new subway``, because no complete reading emits ``new``
+followed by ``subway``. If two rules overlap, as in ``a b -> x y`` and ``b c ->
+u v``, ``a b c`` has the readings ``a b c``, ``x y c`` and ``a u v``; ``x u v``
+is not a reading.
+
+The parser applies rules inside one term only. Whitespace, ``AND``/``OR``/
+``NOT``, parentheses, field prefixes and boosts keep their usual scope; a rule
+does not merge several terms into one. Since a term produced by splitting on
+punctuation is still one term, ``a-b-c`` is a single term where the rules apply,
+while ``a b c`` is three terms.
+
+Use quotes to require a complete reading to occur as a phrase::
+
+    q = parser.parse('"nyc subway"')     # adjacent, in order
+    q = parser.parse('"a b c"~3')        # slop applies within the reading
+
+Query introspection works as usual: ``q.all_terms()`` returns every candidate
+word (original and replacement), and the tokens yielded by ``q.tokens()``
+carry character ranges pointing at the original query fragment that triggered
+the replacement, not at text that merely appears in the query string.
+
+A replacement branch needs posting positions. Querying a field that does not
+store positions raises :class:`whoosh.query.QueryError`. If an upstream stop
+filter removed tokens without renumbering positions and the term contains a
+replacement, parsing raises ``QueryError`` rather than silently turning the
+replacement into an adjacent phrase.
+
 Simplifying the query language
 ------------------------------
 

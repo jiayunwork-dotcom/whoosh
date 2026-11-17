@@ -31,6 +31,23 @@ from whoosh import query
 from whoosh.compat import text_type
 from whoosh.qparser import syntax
 from whoosh.qparser.common import print_debug, QueryParserError
+from whoosh.analysis.synonyms import get_synonym_plan, has_synonym_filter
+
+
+def _term_synonym_query(fieldname, plan, boost):
+    """Builds the query for one unquoted parser term whose analyzer produced a
+    synonym plan.
+
+    A complete reading is a conjunction of its parts by construction, so the
+    field's ``multitoken_query`` setting does not apply here: it governs terms
+    that merely split into several unrelated tokens. Multi-word targets are
+    phrase branches inside this one term; single original tokens only need to
+    be present.
+    """
+
+    from whoosh.query.synonyms import SynonymQuery
+    return SynonymQuery(fieldname, plan, slop=1, boost=boost,
+                        phrase_mode=False)
 
 
 # Query parser object
@@ -219,11 +236,35 @@ class QueryParser(object):
                     e = sys.exc_info()[1]
                     return query.error_query(e)
 
-            # Otherwise, ask the field to process the text into a list of
-            # tokenized strings
-            texts = list(field.process_text(text, mode="query",
-                                            tokenize=tokenize,
-                                            removestops=removestops))
+            # If this term's analyzer attached a synonym plan with at least
+            # one real replacement, the term is no longer a single word: it is
+            # a complete-reading query. This happens *inside* the current
+            # syntax node only, so whitespace, operators, grouping, field
+            # restrictions and boosts around the term are untouched.
+            plan = None
+            if tokenize and has_synonym_filter(field.analyzer):
+                # Positions and character offsets let the filter detect
+                # upstream position holes and let the query point back at the
+                # original query text. Other analyzers keep the historical
+                # fast path below.
+                tokens = [t.copy() for t in
+                          field.tokenize(text, mode="query", tokenize=True,
+                                         removestops=removestops,
+                                         positions=True, chars=True)]
+                plan = get_synonym_plan(tokens)
+                if plan is not None and plan.replacement:
+                    return _term_synonym_query(fieldname, plan, boost)
+                # No replacement branch: preserve the exact previous code
+                # path (including field-specific process_text quirks)
+                texts = list(field.process_text(text, mode="query",
+                                                tokenize=tokenize,
+                                                removestops=removestops))
+            else:
+                # Otherwise, ask the field to process the text into a list of
+                # tokenized strings, exactly as before
+                texts = list(field.process_text(text, mode="query",
+                                                tokenize=tokenize,
+                                                removestops=removestops))
 
             # If the analyzer returned more than one token, use the field's
             # multitoken_query attribute to decide what query class, if any, to

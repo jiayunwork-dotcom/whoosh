@@ -292,6 +292,85 @@ only the tokens whose ``stopped`` attribute is ``False``.
     attribute is ``True``.
 
 
+Query-time multi-word synonyms
+==============================
+
+`SynonymFilter` adds multi-word synonym expansion for *query parsing only*.
+It is a normal analysis filter, but it deliberately never rewrites tokens:
+during indexing (and every other mode except ``"query"``) it is a pass-through.
+This keeps the index unchanged and makes the feature usable with indexes that
+were built before the filter existed.
+
+Put it at the end of the chain, after the filters that normalize the text
+(case, stemming, etc.). Rule strings are not analyzed: apply the same
+normalization to your rule strings that the earlier filters apply to text.
+
+::
+
+    from whoosh import analysis, fields
+
+    rules = [
+        (("nyc",), ("new", "york")),
+        (("new", "york"), ("nyc",)),
+    ]
+    ana = (analysis.RegexTokenizer()
+           | analysis.LowercaseFilter()
+           | analysis.SynonymFilter(rules))
+    schema = fields.Schema(text=fields.TEXT(analyzer=ana))
+
+``rules`` is an iterable of ``(source_tokens, target_tokens)`` pairs, where each
+side is a non-empty sequence of non-empty unicode strings. A source may have
+several targets. Duplicate rules and rule order make no difference to matches,
+scores or ordering. Malformed rules raise ``ValueError``
+(``analysis.SynonymError``) at construction time.
+
+In ``"query"`` mode the filter attaches a :class:`~whoosh.analysis.SynonymPlan`
+to the tokens. The query parser turns the plan into one compact
+:class:`~whoosh.query.SynonymQuery`, so the query object stays linear in the
+size of the input rather than growing with the number of possible readings.
+
+What gets replaced
+------------------
+
+The filter computes replacements over the *original* input tokens only. It
+never feeds a generated word back into the rules, so self-referential and
+cyclic rule sets terminate. Every position has at least two possible
+readings: the original token and each complete matching source (all
+overlapping sources are kept, not just the longest). A single reading always
+consumes each input token exactly once; branches cannot cross or be
+recombined.
+
+Without quotes, a rule only applies inside one query-parser term. In ``nyc
+subway`` the parser sees two terms, so the ``nyc`` term can read as ``nyc`` or
+``new york``, but the space between terms is preserved: a query can never be
+rewritten into a phrase spanning two unrelated parser terms, and surrounding
+AND/OR/NOT, field restrictions, parentheses and boosts keep their scope. To
+require a whole reading as an adjacent phrase, quote the query: ``"nyc
+subway"`` matches any complete reading as a phrase, and ``~slop`` applies
+between adjacent emitted words of the selected reading.
+
+Within an unquoted term, only the words inside one multi-word target are
+required to be adjacent; single original words are just required to be
+present, matching how the parser treats a term that splits into several words.
+
+Position holes
+--------------
+
+Version 1 handles contiguous token positions. If an upstream filter removed
+tokens without renumbering (for example ``StopFilter(renumber=False)``), a
+query whose term actually contains a replacement branch raises
+``query.QueryError`` instead of silently tightening the replacement into an
+adjacent phrase. Queries with no matching rule are unaffected.
+
+Fields without positions
+------------------------
+
+A query that could emit more than one adjacent word (a multi-word target, or a
+quoted reading with more than one word) requires posting positions. If the
+field does not store them, searching raises the same ``QueryError`` that phrase
+search raises. Fields without this filter, queries with no matching rule, and
+indexing behave exactly as before.
+
 Implementation notes
 --------------------
 

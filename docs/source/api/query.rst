@@ -29,6 +29,7 @@ Query classes
 .. autoclass:: Variations
 .. autoclass:: FuzzyTerm
 .. autoclass:: Phrase
+.. autoclass:: SynonymQuery
 .. autoclass:: And
 .. autoclass:: Or
 .. autoclass:: DisjunctionMax
